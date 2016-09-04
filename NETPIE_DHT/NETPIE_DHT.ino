@@ -1,53 +1,52 @@
-/*  NETPIE ESP8266 basic sample                            */
-/*  More information visit : https://netpie.io             */
+/*  Article Node-RED Netpie                                */
+/*  More information visit : http://nodered.org/ 
+                             https://netpie.io             
+                             http://cmmakerclub.com/       */
 
 #include <ESP8266WiFi.h>
 #include <MicroGear.h>
-#include "DHT.h"
+#include <DHT.h>
 
-const char* ssid     = "xxxxxxxx";  // Change your ssid wifi 
-const char* password = "xxxxxxxx";  // Change your password wifi
+#include "CMMC_Blink.hpp"
+CMMC_Blink blinker;
+#include "CMMC_Interval.hpp"
 
-// NETPIE.io : NETPIE_01
-#define APPID   "HelloNETPIE"       // Change your appID
-#define KEY     "xxxxxxxxxxx"       // Change your Key
-#define SECRET  "xxxxxxxxxxx"       // Change your SECRET
-#define ALIAS   "NETPIEname"        // Change your name
+const char* ssid     = "SSID";
+const char* password = "PASSWORD";
 
-#define LEDPIN 2
-#define DHTPIN 12
-#define DHTTYPE DHT22
+
+#define APPID       "CMMC"
+#define KEY         "xxxx"
+#define SECRET      "xxxx"
+#define ALIAS       "DHTdev"
 
 WiFiClient client;
 AuthClient *authclient;
+
+#define DHTPIN 12
+#define DHTTYPE DHT22   // DHT 22  (AM2302), AM2321
 DHT dht(DHTPIN, DHTTYPE);
+CMMC_Interval timer001;
 
 int timer = 0;
+int relayPin = 15; //control relay pin
+
 MicroGear microgear(client);
 
 /* If a new message arrives, do this */
 void onMsghandler(char *topic, uint8_t* msg, unsigned int msglen) {
-  Serial.print("Recieve from dashboard = ");
-  char Str_msg[msglen];
-  for (int i = 0; i < msglen; i++)
-  {
-    Str_msg[i] = (char)msg[i];
-    Serial.print((char)msg[i]);
-  }
+  Serial.print("Incoming message --> ");
+  msg[msglen] = '\0';
+  Serial.println((char *)msg);
+  String msg2 = String((char*)msg);
 
-  String msgIN = String(Str_msg).substring(0, msglen);
-  Serial.print("\nmsg from ");
-  Serial.println(topic);
-
-  if (msgIN == "ON")
-  {
-    digitalWrite(LEDPIN, LOW);
-    delay(10);
+  if (msg2 == "ON") {
+    digitalWrite(relayPin, HIGH);
+    digitalWrite(LED_BUILTIN, LOW);
   }
-  else if (msgIN == "OFF")
-  {
-    digitalWrite(LEDPIN, HIGH);
-    delay(10);
+  else if (msg2 == "OFF") {
+    digitalWrite(relayPin, LOW);
+    digitalWrite(LED_BUILTIN, HIGH);
   }
 }
 
@@ -68,6 +67,8 @@ void onLostgear(char *attribute, uint8_t* msg, unsigned int msglen) {
 /* When a microgear is connected, do this */
 void onConnected(char *attribute, uint8_t* msg, unsigned int msglen) {
   Serial.println("Connected to NETPIE...");
+  //on led when Connected to NETPIE
+  analogWrite(LED_BUILTIN, 0); //LED_BUILTIN use avctive Low to On
   /* Set the alias of this microgear ALIAS */
   microgear.setName(ALIAS);
 }
@@ -75,7 +76,6 @@ void onConnected(char *attribute, uint8_t* msg, unsigned int msglen) {
 
 void setup() {
   /* Add Event listeners */
-
   /* Call onMsghandler() when new message arraives */
   microgear.on(MESSAGE, onMsghandler);
 
@@ -88,11 +88,17 @@ void setup() {
   /* Call onConnected() when NETPIE connection is established */
   microgear.on(CONNECTED, onConnected);
 
+  pinMode(relayPin, OUTPUT);
+  pinMode(LED_BUILTIN, OUTPUT);
+
+  dht.begin();
+  blinker.init();
   Serial.begin(115200);
   Serial.println("Starting...");
 
-  /* Initial WIFI, this is just a basic method to configure WIFI on ESP8266.                       */
-  /* You may want to use other method that is more complicated, but provide better user experience */
+  blinker.blink(50, LED_BUILTIN);
+  delay(200);
+
   if (WiFi.begin(ssid, password)) {
     while (WiFi.status() != WL_CONNECTED) {
       delay(500);
@@ -103,43 +109,60 @@ void setup() {
   Serial.println("WiFi connected");
   Serial.println("IP address: ");
   Serial.println(WiFi.localIP());
-
-  dht.begin();
-  pinMode(LEDPIN, OUTPUT);
-
+  blinker.blink(200, LED_BUILTIN);
   /* Initial with KEY, SECRET and also set the ALIAS here */
   microgear.init(KEY, SECRET, ALIAS);
 
   /* connect to NETPIE to a specific APPID */
   microgear.connect(APPID);
+
+  // connected to netpie so turn off the led
+  blinker.detach();
+  digitalWrite(LED_BUILTIN, HIGH);
 }
 
 void loop() {
-  /* To check if the microgear is still connected */
+  microgear.loop();
   if (microgear.connected()) {
-    Serial.println("connected");
+    timer001.every_ms(2000, [&]() {
+      Serial.print("Publish... ");
+      //******  read DHT sensor very 2sec
+      float h = 0.00f;
+      float t = 0.00f;
+      // Reading temperature or humidity takes about 250 milliseconds!
+      // Sensor readings may also be up to 2 seconds 'old' (its a very slow sensor)
+      h = dht.readHumidity();
+      // Read temperature as Celsius (the default)
+      t = dht.readTemperature();
 
-    /* Call this method regularly otherwise the connection may be lost */
-    microgear.loop();
+      if (isnan(h) || isnan(t)) {
+        Serial.println("Failed to read from DHT sensor!");
+        //return;
+      }
+      else {
+        Serial.print("Humidity: ");
+        Serial.print(h);
+        Serial.print(" %\t");
+        Serial.print("Temperature: ");
+        Serial.print(t);
+        Serial.println(" *C ");
 
-    // อ่านค่าจากเซ็นเซอร์ DHt22
-    float t = dht.readTemperature();
-    float h = dht.readHumidity();
+        /* Chat with the microgear named ALIAS which is myself */
+        microgear.chat("plug001/temp", (String)t);
+        microgear.chat("plug001/humid", (String)h);
 
-    // ส่งค่าไปยัง netpie
-    microgear.chat("NETPIEname/Temperature", String(t));
-    microgear.chat("NETPIEname/Humidity", String(h));
-
-    Serial.print("Temperature = ");
-    Serial.print(t);
-    Serial.print("\t");
-    Serial.print("Humidity = ");
-    Serial.println(h);
-    delay(500);
+        char topic_temp[MAXTOPICSIZE];
+        char topic_humid[MAXTOPICSIZE];
+        sprintf(topic_temp, "/gearname/%s/temp", ALIAS);
+        sprintf(topic_humid, "/gearname/%s/humid", ALIAS);
+        //retain message
+        microgear.publish(topic_temp, String(t), true);
+        microgear.publish(topic_humid, String(h), true);
+      }
+    });
   }
   else {
-    Serial.println("connection lost, reconnect...");
+    Serial.println("DIS CONNECTED");
     microgear.connect(APPID);
   }
-  delay(100);
 }
